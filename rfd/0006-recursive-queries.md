@@ -7,11 +7,9 @@
 RFD 0007 makes `with_cte` raise instead of silently returning wrong
 answers. This RFD makes it work.
 
-A CTE is a named subquery, not a physical operator. Apple handles naming in
-its SQL front end and compiles to plans. Recursion is where the operators
-live: `RecordQueryRecursiveDfsJoinPlan` ("recursively applies a plan to
-earlier results, starting with a root plan") and
-`RecordQueryRecursiveLevelUnionPlan`.
+A CTE is a named subquery, not a physical operator. Recursion is where the
+operators live: `RecordQueryRecursiveDfsJoinPlan` "recursively applies a
+plan to earlier results, starting with a root plan".
 
 ## Decision
 
@@ -23,18 +21,19 @@ Two parts, in order:
 - **Recursive CTEs.** Add `%RecursiveDfs{root, step}`. Run the root, then
   apply the step to each frontier until it yields nothing.
 
-Require an explicit depth bound: FoundationDB's hard 5 second transaction
-limit must not be discovered by unbounded recursion.
-
 ## Lean model
 
 `lean-fdb-query-ops`, module `Recursive`:
 
 - `recurse (step : A -> List A) (fuel : Nat) (root : List A) : List A`
 - terminates for all `fuel`, by structural recursion on `fuel`
-- monotone: the result grows with fuel until a fixed point
 
-## Consequence and open questions
+## Consequence and resolution
 
-Open: default depth? Dedup by primary key during recursion, or let a cycle
-run to the fuel bound?
+Default depth 100, configurable, erroring on exhaustion — SQL Server's
+`MAXRECURSION` default, which raises error 530 and accepts 0 to 32767, 0
+meaning unlimited. A depth bound is the one place a tier-S engine does
+refuse: runaway recursion is a logic bug, not a cost.
+
+Dedup follows SQL: the `UNION` form dedups and so terminates on cycles,
+`UNION ALL` does not. Expose both; dedup by primary key.

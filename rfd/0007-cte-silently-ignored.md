@@ -23,17 +23,18 @@ does not exist.
 ## Decision
 
 Raise `Unsupported` when `with_ctes` is non-empty, naming the field,
-following the convention already in `layer/query.ex`. Wrong answers are
-worse than a refusal. RFD 0006 covers real support.
+following the convention already in `layer/query.ex`. RFD 0006 covers real support.
 
 ## Lean model
 
 None. A guard clause, not semantics. Test only.
 
-## Consequence and open questions
+## Consequence and resolution
 
-No caller can rely on today's behaviour correctly, because the CTE never
-ran.
+No caller can rely on today's behaviour, because the CTE never ran.
 
-Open: does Ecto populate `with_ctes` implicitly anywhere, so the guard
-could fire on a query the user did not write as a CTE?
+The guard cannot fire spuriously. In Ecto only
+`Ecto.Query.Builder.CTE.apply/5`, reached through `with_cte/3`, ever sets
+`with_ctes`. The field defaults to `nil`, and `recursive_ctes/2` only
+flips a flag on an expression that already exists. A non-empty
+`with_ctes` therefore always means the user wrote a CTE.

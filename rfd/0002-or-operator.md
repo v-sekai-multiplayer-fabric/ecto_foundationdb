@@ -27,13 +27,14 @@ branch is itself unsupported.
 - every element of `a` and of `b` appears in the result
 - no key appears twice
 - `unionBy k a [] = a`, up to duplicate removal
-- Plausible: agrees with a filter of `p or q` over the full table
 
-## Consequence and open questions
+## Consequence and resolution
 
 Output is unordered, so any `order_by` applies after the union. That
 interacts with RFD 0003 and forbids early stop under a `limit`. Cost is
 the sum of the branches.
 
-Open: ordered merge when branches share an index order, matching
-`RecordQueryUnionPlan`? Defer until 0003 lands.
+Yes, add the ordered merge, after 0003. PostgreSQL's `MergeAppend` does
+exactly this: it merges children by sort key, requiring every child sorted
+on that key. Until 0003 provides ordered scans there is nothing to merge,
+so unordered union plus a client sort is the right first cut.

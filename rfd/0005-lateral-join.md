@@ -9,8 +9,7 @@ covers `preload`, the larger number, but not real joins.
 
 Apple's `RecordQueryFlatMapPlan`: "`FLATMAP` implements correlated lateral
 joins by executing an inner plan for each row produced by a driving outer
-plan and combining the results." FoundationDB gains no join capability —
-the layer above iterates.
+plan." FoundationDB gains no join capability — the layer above iterates.
 
 ## Decision
 
@@ -30,7 +29,12 @@ to a cross product.
 - equals `outer.flatMap (fun a => (inner a).map (Prod.mk a))`
 - empty outer gives empty; empty inner drops that outer row
 
-## Consequence and open questions
+## Consequence and resolution
 
 One inner plan per outer row. An unindexed inner side is a scan per row,
-so refusing matters. Open: are left joins needed?
+so refusing matters.
+
+Yes, left joins are needed: Ecto uses `left_join` heavily, and every
+tier-S engine supports the full set. It is cheap here. A left join is the
+same flat map, except an empty inner yields one row of nulls rather than
+dropping the outer row. Inner and left share one operator.

@@ -4,12 +4,10 @@
 
 ## Context
 
-`count`, `sum`, `avg`, `min`, `max` are unsupported. Callers currently
-fetch rows and fold in Elixir. `ecto-bench-tpcc`'s `stock_level/1` does
-exactly this, and says so in its moduledoc.
-
-Apple's analogue is `RecordQueryStreamingAggregationPlan`, which folds over
-an ordered stream rather than materialising it.
+`count`, `sum`, `avg`, `min`, `max` are unsupported; callers fetch rows and
+fold in Elixir, as `ecto-bench-tpcc`'s `stock_level/1` does. Apple's
+analogue is `RecordQueryStreamingAggregationPlan`, folding an ordered
+stream rather than materialising it.
 
 ## Decision
 
@@ -30,11 +28,13 @@ Refuse aggregates over an unbounded range, so `Repo.aggregate(Schema,
 - `foldStream (f : A -> V -> A) (init : A) (rows : List V) : A`
 - `foldStream` over a scan equals the same fold over the sorted table
 - `minOf (scanOrdered true rows) = rows.minimum?`, and dually for max
-- Plausible: streaming count agrees with `List.length` of a filter
 
-## Consequence and open questions
+## Consequence and resolution
 
-Aggregates cost a scan of the constrained range. That is honest, but it is
-not a SQL engine's index-only count.
+Aggregates cost a scan of the constrained range, not an index-only count.
 
-Open: refuse or warn on an unbounded aggregate? Is `group_by` wanted?
+Do not refuse for being unbounded. PostgreSQL answers `count(*)` with a
+sequential scan and charges for it. The real constraint differs here:
+FoundationDB's 5 second transaction limit makes a long scan fail, not
+merely run slow. So chunk across transactions with a continuation, the
+mechanism RFD 0010 needs anyway, and refuse only what cannot be chunked.

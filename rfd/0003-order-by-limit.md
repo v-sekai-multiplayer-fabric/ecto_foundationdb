@@ -5,9 +5,9 @@
 ## Context
 
 Data is stored in key order, and range reads are ordered and reversible.
-`backward?/3` already reverses a scan when the requested order matches the
-key descending. Missing: a general `order_by`, and a `limit` that stops
-early. `zone-backend` has 11 `limit`s and 10 `offset`s (`scrivener_ecto`).
+`backward?/3` already reverses a scan when the order matches the key
+descending. Missing: a general `order_by` and an early-stopping `limit`.
+`zone-backend` has 11 `limit`s and 10 `offset`s (`scrivener_ecto`).
 
 ## Decision
 
@@ -27,10 +27,13 @@ Two cases:
 
 - `scanOrdered (asc : Bool) (rows : List V) : List V`
 - reversing a sorted scan equals sorting descending
-- `take n (scanOrdered asc rows)` equals the first `n` of the fully
-  sorted result — the property that licenses early stop
 
-## Consequence and open questions
+## Consequence and resolution
 
-Pagination works only along an index. Open: warn or refuse on a large
-unindexed `order_by`?
+Do not refuse. PostgreSQL never refuses an unindexed sort; it sorts,
+spilling past `work_mem`. We have no spill, but we can take the better
+half: with a `limit`, use a bounded top-N sort, so memory is O(limit), not
+O(rows). That is PostgreSQL's top-N heapsort.
+
+Refuse only when the sort is unindexed, has no `limit`, and the range is
+unbounded — where memory is genuinely unbounded.
