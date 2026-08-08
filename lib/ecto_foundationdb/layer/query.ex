@@ -128,6 +128,16 @@ defmodule EctoFoundationDB.Layer.Query do
   # exactly the path they did before.
   defp make_range(metadata, plan = %QueryPlan{constraints: constraints}, options) do
     case composite_pk_prefix_values(plan.schema, constraints) do
+      {:ok_between, prefix, between} ->
+        %{schema: schema, ordering: ordering, limit: limit} = plan
+
+        {query_ordering, post_query_ordering_fn} =
+          get_query_ordering(schema, nil, [], limit, ordering, options)
+
+        plan = make_composite_between_range(plan, prefix, between)
+        plan = backward?(plan, query_ordering, options)
+        {plan, post_query_ordering_fn}
+
       {:ok, values} ->
         %{schema: schema, ordering: ordering, limit: limit} = plan
 
@@ -158,28 +168,77 @@ defmodule EctoFoundationDB.Layer.Query do
 
   # The constrained fields must be a leading prefix of the declared key order,
   # which is one contiguous range. Returns the values in key order.
+  #
+  # A trailing Between on the field immediately after that prefix is also one
+  # contiguous range, which is what TPC-C's StockLevel window needs. Any other
+  # shape touching key fields is refused: before this it fell through to the
+  # single-key path, which built a range from one value as though it were the
+  # whole key and returned no rows at all.
   defp composite_pk_prefix_values(nil, _constraints), do: :not_composite
 
   defp composite_pk_prefix_values(schema, constraints) do
     pk_fields = Fields.get_pk_fields!(schema)
     equals = for %QueryPlan.Equal{field: f, param: p} <- constraints, do: {f, p}
+    betweens = for b = %QueryPlan.Between{} <- constraints, do: b
     fields = Keyword.keys(equals)
+    touches_key? = Enum.any?(fields ++ Enum.map(betweens, & &1.field), &(&1 in pk_fields))
 
     cond do
       length(pk_fields) < 2 ->
         :not_composite
 
-      # Constraints touching no key field are left to the index path.
-      equals == [] or length(equals) != length(constraints) or
-          not Enum.all?(fields, &(&1 in pk_fields)) ->
+      # Nothing here touches a key field, so this belongs to the index path.
+      not touches_key? ->
         :not_composite
 
-      Enum.sort(fields) == Enum.sort(Enum.take(pk_fields, length(equals))) ->
+      # Every constraint is an equality, and together they are a leading prefix.
+      betweens == [] and equals != [] and length(equals) == length(constraints) and
+        Enum.all?(fields, &(&1 in pk_fields)) and
+          Enum.sort(fields) == Enum.sort(Enum.take(pk_fields, length(equals))) ->
         {:ok, Enum.map(Enum.take(pk_fields, length(equals)), &Keyword.fetch!(equals, &1))}
 
+      # A leading equality prefix plus a Between on the very next key field.
+      match?([_], betweens) and length(equals) + 1 == length(constraints) and
+        Enum.all?(fields, &(&1 in pk_fields)) and
+        Enum.sort(fields) == Enum.sort(Enum.take(pk_fields, length(equals))) and
+          hd(betweens).field == Enum.at(pk_fields, length(equals)) ->
+        prefix = Enum.map(Enum.take(pk_fields, length(equals)), &Keyword.fetch!(equals, &1))
+        {:ok_between, prefix, hd(betweens)}
+
       true ->
-        {:bad_prefix, fields, pk_fields}
+        {:bad_prefix, fields ++ Enum.map(betweens, & &1.field), pk_fields}
     end
+  end
+
+  # A Between on the field after the equality prefix is still one contiguous
+  # range: bound the last tuple element instead of leaving it open.
+  defp make_composite_between_range(plan = %QueryPlan{}, prefix, between) do
+    %{tenant: tenant, source: source, layer_data: layer_data} = plan
+
+    %{
+      param_left: param_left,
+      inclusive_left?: inclusive_left?,
+      param_right: param_right,
+      inclusive_right?: inclusive_right?
+    } = between
+
+    bound = fn
+      nil ->
+        Pack.primary_prefix_range(tenant, source, prefix)
+
+      v ->
+        PrimaryKVCodec.range(
+          Pack.primary_codec(tenant, source, %CompositePK{values: prefix ++ [v]})
+        )
+    end
+
+    {left_start, left_end} = bound.(param_left)
+    {right_start, right_end} = bound.(param_right)
+
+    start_key = if inclusive_left?, do: left_start, else: left_end
+    end_key = if inclusive_right?, do: right_end, else: right_start
+
+    %{plan | layer_data: %{layer_data | range: {start_key, end_key}}}
   end
 
   defp make_composite_datakey_range(plan, values) do

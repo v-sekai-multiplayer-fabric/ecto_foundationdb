@@ -171,6 +171,61 @@ defmodule Ecto.Integration.CompositePKEdgeTest do
     end
   end
 
+  describe "trailing-key range" do
+    # TPC-C's StockLevel wants the last 20 orders of a district:
+    # OL_O_ID >= o_id - 20 AND OL_O_ID < o_id, with warehouse and district
+    # fixed. That is an equality prefix plus a Between on the next key field,
+    # which is still one contiguous range.
+    test "bounded range on the field after the equality prefix", context do
+      tenant = context[:tenant]
+      for d <- 1..50, do: put(tenant, 1, d, "d")
+      put(tenant, 2, 10, "other-warehouse")
+
+      ids =
+        from(d in District, where: d.d_w_id == ^1 and d.d_id >= ^31 and d.d_id < ^36)
+        |> TestRepo.all(prefix: tenant)
+        |> Enum.map(& &1.d_id)
+        |> Enum.sort()
+
+      assert [31, 32, 33, 34, 35] = ids
+    end
+
+    test "open-ended range on the field after the prefix", context do
+      tenant = context[:tenant]
+      for d <- 1..50, do: put(tenant, 1, d, "d")
+
+      assert 5 =
+               from(d in District, where: d.d_w_id == ^1 and d.d_id >= ^46)
+               |> TestRepo.all(prefix: tenant)
+               |> length()
+    end
+
+    test "the range never leaks into another prefix", context do
+      tenant = context[:tenant]
+      for w <- 1..3, d <- 1..10, do: put(tenant, w, d, "w#{w}")
+
+      rows =
+        from(d in District, where: d.d_w_id == ^2 and d.d_id >= ^5)
+        |> TestRepo.all(prefix: tenant)
+
+      assert 6 = length(rows)
+      assert Enum.all?(rows, &(&1.d_w_id == 2))
+    end
+
+    # Before this, a Between on a non-leading key field fell through to the
+    # single-key path, built a range from that one value as though it were the
+    # whole key, and returned no rows. Silently wrong beats loudly broken only
+    # for whoever never checks.
+    test "a range on a trailing field with no prefix is refused, not silently empty", context do
+      tenant = context[:tenant]
+      for d <- 1..50, do: put(tenant, 1, d, "d")
+
+      assert_raise EctoFoundationDB.Exception.Unsupported, ~r/leading prefix/, fn ->
+        from(d in District, where: d.d_id >= ^46) |> TestRepo.all(prefix: tenant)
+      end
+    end
+  end
+
   describe "key encoding" do
     test "negative and large values keep numeric order", context do
       tenant = context[:tenant]
