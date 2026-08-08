@@ -181,32 +181,34 @@ defmodule EctoFoundationDB.Layer.Query do
     equals = for %QueryPlan.Equal{field: f, param: p} <- constraints, do: {f, p}
     betweens = for b = %QueryPlan.Between{} <- constraints, do: b
     fields = Keyword.keys(equals)
-    touches_key? = Enum.any?(fields ++ Enum.map(betweens, & &1.field), &(&1 in pk_fields))
+    all_fields = fields ++ Enum.map(betweens, & &1.field)
+    # Every constrained field must be a key field. If even one is not, an
+    # index may cover the set, so the index path decides rather than this.
+    only_key_fields? = all_fields != [] and Enum.all?(all_fields, &(&1 in pk_fields))
 
     cond do
       length(pk_fields) < 2 ->
         :not_composite
 
-      # Nothing here touches a key field, so this belongs to the index path.
-      not touches_key? ->
+      # Something outside the key is constrained, so this belongs to the
+      # index path.
+      not only_key_fields? ->
         :not_composite
 
       # Every constraint is an equality, and together they are a leading prefix.
       betweens == [] and equals != [] and length(equals) == length(constraints) and
-        Enum.all?(fields, &(&1 in pk_fields)) and
           Enum.sort(fields) == Enum.sort(Enum.take(pk_fields, length(equals))) ->
         {:ok, Enum.map(Enum.take(pk_fields, length(equals)), &Keyword.fetch!(equals, &1))}
 
       # A leading equality prefix plus a Between on the very next key field.
       match?([_], betweens) and length(equals) + 1 == length(constraints) and
-        Enum.all?(fields, &(&1 in pk_fields)) and
         Enum.sort(fields) == Enum.sort(Enum.take(pk_fields, length(equals))) and
           hd(betweens).field == Enum.at(pk_fields, length(equals)) ->
         prefix = Enum.map(Enum.take(pk_fields, length(equals)), &Keyword.fetch!(equals, &1))
         {:ok_between, prefix, hd(betweens)}
 
       true ->
-        {:bad_prefix, fields ++ Enum.map(betweens, & &1.field), pk_fields}
+        {:bad_prefix, all_fields, pk_fields}
     end
   end
 
