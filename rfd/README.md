@@ -25,7 +25,6 @@ parsed AST; emitting SQL only creates the need to parse it back. Apple's
 `fdb-record-layer` solves this above the KV store, with operators that
 iterate. We port that taxonomy.
 ## Index
-
 | RFD | Topic | Record Layer analogue | Size |
 |---|---|---|---|
 | [0007](0007-cte-silently-ignored.md) | CTE bug | — | ~1 hour |
