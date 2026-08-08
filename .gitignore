@@ -27,3 +27,8 @@ ecto_foundationdb-*.tar
 
 .erlfdb_sandbox
 .ex_fdbmonitor
+
+/rfd/.lake/
+
+# Lean build output for rfd/
+rfd/.lake/
