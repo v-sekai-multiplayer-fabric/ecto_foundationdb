@@ -24,7 +24,52 @@ defmodule EctoFoundationDB.Layer.Query do
 
   Must be called while inside a transaction.
   """
-  def all(_tenant, _adapter_meta, plan = %QueryPlan{constraints: [%{pk?: true}]}, options) do
+  def all(tenant, adapter_meta, plan = %QueryPlan{constraints: constraints}, options) do
+    case Enum.filter(constraints, &match?(%QueryPlan.In{}, &1)) do
+      [] -> all_scan(tenant, adapter_meta, plan, options)
+      [in_c] -> all_in_join(tenant, adapter_meta, plan, in_c, options)
+      ins -> raise_multiple_in!(ins)
+    end
+  end
+
+  # Cribbed from fdb-record-layer's RecordQueryInJoinPlan: "executes a child
+  # plan once for each of the elements of some IN list". Each element becomes
+  # an Equal sub-plan reusing the ordinary path, and the results concatenate.
+  #
+  # Two differences from theirs, both deliberate. They pipeline the inner
+  # plans through flatMapPipelined; we materialise, because an IN list is
+  # bounded by the caller. And their isReverse throws unless the IN source is
+  # sorted -- "does not have well defined reverse-ness" -- so the order across
+  # the concatenation is the IN list's order, not the key's.
+  defp all_in_join(tenant, adapter_meta, plan = %QueryPlan{}, in_c, options) do
+    others = Enum.reject(plan.constraints, &(&1 == in_c))
+
+    {results, ordering_fn} =
+      Enum.reduce(in_c.params, {[], nil}, fn value, {acc, _prev_fn} ->
+        sub_plan = %QueryPlan{
+          plan
+          | constraints:
+              others ++ [%QueryPlan.Equal{field: in_c.field, pk?: in_c.pk?, param: value}]
+        }
+
+        {iterator, fun} = all_scan(tenant, adapter_meta, sub_plan, options)
+        {acc ++ Enum.to_list(FDB.Stream.from_iterator(iterator)), fun}
+      end)
+
+    {FDB.LazyRangeIterator.ListIterator.start(results), ordering_fn}
+  end
+
+  defp raise_multiple_in!(ins) do
+    fields = for %QueryPlan.In{field: f} <- ins, do: f
+
+    raise Unsupported,
+          "FoundationDB Adapter supports one `in` per query, and this one has " <>
+            "#{length(ins)}: #{inspect(fields)}. Each `in` fans out into one " <>
+            "lookup per element, so two of them multiply rather than add. " <>
+            "Constrain the other fields with `==`, or issue separate queries."
+  end
+
+  defp all_scan(_tenant, _adapter_meta, plan = %QueryPlan{constraints: [%{pk?: true}]}, options) do
     # Single constraint on the primary key, skip the metadata retrieval
     {plan, iterator, post_query_ordering_fn} = tx_all(Tx.get(), nil, plan, options)
 
@@ -32,7 +77,7 @@ defmodule EctoFoundationDB.Layer.Query do
      post_query_ordering_fn}
   end
 
-  def all(tenant, adapter_meta, plan = %QueryPlan{}, options) do
+  defp all_scan(tenant, adapter_meta, plan = %QueryPlan{}, options) do
     assert_repo_limit_omitted(options)
 
     {plan, iterator, post_query_ordering_fn} =

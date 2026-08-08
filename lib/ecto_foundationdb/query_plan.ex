@@ -32,6 +32,15 @@ defmodule EctoFoundationDB.QueryPlan do
     defstruct [:field, :pk?, :param]
   end
 
+  defmodule In do
+    @moduledoc false
+    # Cribbed from fdb-record-layer's RecordQueryInJoinPlan: "a query plan
+    # that executes a child plan once for each of the elements of some IN
+    # list". `params` is the list; the layer runs one Equal sub-plan per
+    # element and concatenates.
+    defstruct [:field, :pk?, :params]
+  end
+
   defmodule Between do
     @moduledoc false
     defstruct [
@@ -162,6 +171,18 @@ defmodule EctoFoundationDB.QueryPlan do
   end
 
   def get_op(
+        {:in, [], [{{:., [], [{:&, [], [0]}, where_field]}, [], []}, where_params]},
+        schema,
+        params
+      ) do
+    %In{
+      field: where_field,
+      pk?: pk?(schema, where_field),
+      params: get_pinned_param(params, where_params)
+    }
+  end
+
+  def get_op(
         {:==, [], [{{:., [], [{:&, [], [0]}, where_field]}, [], []}, where_param]},
         schema,
         params
@@ -240,6 +261,13 @@ defmodule EctoFoundationDB.QueryPlan do
 
   def get_pinned_param(params, {:^, [], [pos]}) do
     Enum.at(params, pos)
+  end
+
+  # Ecto splices `x in ^list` as a two-element pin: the start index and the
+  # length. Every other operator takes a single-index pin, so this clause is
+  # what an `in` needs to see its list at all.
+  def get_pinned_param(params, {:^, [], [pos, len]}) do
+    Enum.slice(params, pos, len)
   end
 
   def get_pinned_param(_params, val) do
