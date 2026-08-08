@@ -1,0 +1,46 @@
+name = "fdb_query_ops"
+defaultTargets = [
+  "InJoin", "Union", "Ordering", "Aggregate",
+  "FlatMap", "Recursive", "GroupBy",
+  "Cascades", "Inverted", "OnlineIndex",
+]
+
+[[lean_lib]]
+name = "InJoin"
+srcDir = "0001-in-operator"
+
+[[lean_lib]]
+name = "Union"
+srcDir = "0002-or-operator"
+
+[[lean_lib]]
+name = "Ordering"
+srcDir = "0003-order-by-limit"
+
+[[lean_lib]]
+name = "Aggregate"
+srcDir = "0004-aggregates"
+
+[[lean_lib]]
+name = "FlatMap"
+srcDir = "0005-lateral-join"
+
+[[lean_lib]]
+name = "Recursive"
+srcDir = "0006-recursive-queries"
+
+[[lean_lib]]
+name = "GroupBy"
+srcDir = "0011-group-by"
+
+[[lean_lib]]
+name = "Cascades"
+srcDir = "0008-cascades-cost-optimizer"
+
+[[lean_lib]]
+name = "Inverted"
+srcDir = "0009-lucene-like-indexing"
+
+[[lean_lib]]
+name = "OnlineIndex"
+srcDir = "0010-online-index-building"
